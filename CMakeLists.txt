@@ -58,7 +58,8 @@ endif()
 
 if(CUDA_FOUND)
 	list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
-		${CUDA_LIBRARIES})
+		${CUDA_CUDA_LIBRARY}
+		cuda)
 endif()
 
 # OpenCL Accl
