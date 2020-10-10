@@ -1193,6 +1193,15 @@ bool validate_encoder(encoder_t &encoder) {
 }
 
 int init() {
+#ifdef ENABLE_NVENC
+#ifndef _WIN32
+  if(cuInit(0) != CUDA_SUCCESS) {
+    BOOST_LOG(error) << "Could not initialize the CUDA driver API"sv;
+    return -1;
+  }
+#endif
+#endif
+
   KITTY_WHILE_LOOP(auto pos = std::begin(encoders), pos != std::end(encoders), {
     if(
       (!config::video.encoder.empty() && pos->name != config::video.encoder)  ||
@@ -1327,7 +1336,17 @@ util::Either<buffer_t, int> nv_d3d_make_hwdevice_ctx(platf::hwdevice_t *hwdevice
 #else
 
 void nv_cuda_img_to_frame(const platf::img_t &img, frame_t &frame) {
-  // TODO: I don't know how to implement CUDA version.
+  if(img.data == frame->data[0]) {
+    return;
+  }
+
+  frame->data[0] = img.data;
+  frame->data[1] = 0;
+
+  frame->linesize[0] = img.row_pitch;
+
+  frame->height = img.height;
+  frame->width = img.width;
 }
 
 util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevice_ctx) {
@@ -1335,11 +1354,6 @@ util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevic
   auto ctx = (AVCUDADeviceContext*)((AVHWDeviceContext*)ctx_buf->data)->hwctx;
   
   std::fill_n((std::uint8_t*)ctx, sizeof(AVCUDADeviceContext), 0);
-
-  if(cuInit(0) != CUDA_SUCCESS) {
-    BOOST_LOG(error) << "Could not initialize the CUDA driver API"sv;
-    return -1;
-  }
 
   CUdevice device;
   ///TODO: I don't know hwdevice_ctx->data content
