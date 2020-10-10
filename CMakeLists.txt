@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.1)
 
 project(Sunshine)
 
@@ -46,6 +46,27 @@ find_package(OpenSSL REQUIRED)
 
 if(NOT SUNSHINE_STANDALONE)
 	find_package(FFmpeg REQUIRED)
+	find_package(CUDA)
+	find_package(OpenCL)
+endif()
+
+# NVENC Accl
+
+if(WIN32 OR CUDA_FOUND)
+	list(APPEND SUNSHINE_DEFINITIONS ENABLE_NVENC)
+endif()
+
+if(CUDA_FOUND)
+	list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
+		${CUDA_LIBRARIES})
+endif()
+
+# OpenCL Accl
+
+if(OpenCL_FOUND)
+	list(APPEND SUNSHINE_DEFINITIONS ENABLE_OPENCL)
+	list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
+		${OpenCL_LIBRARIES})
 endif()
 
 list(APPEND SUNSHINE_COMPILE_OPTIONS -fPIC -Wall -Wno-missing-braces -Wno-maybe-uninitialized -Wno-sign-compare)
@@ -160,6 +181,7 @@ include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/moonlight-common-c/enet/include
   ${CMAKE_CURRENT_SOURCE_DIR}/moonlight-common-c/reedsolomon
   ${FFMPEG_INCLUDE_DIRS}
+  ${CUDA_INCLUDE_DIRS}
   ${PLATFORM_INCLUDE_DIRS}
 )
 

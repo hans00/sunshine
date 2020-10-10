@@ -17,6 +17,7 @@ extern "C" {
 #include "video.h"
 #include "main.h"
 
+#ifdef ENABLE_NVENC
 extern "C" {
 #ifdef _WIN32
 
@@ -28,6 +29,7 @@ extern "C" {
 
 #endif
 }
+#endif
 
 namespace video {
 using namespace std::literals;
@@ -74,8 +76,6 @@ platf::dev_type_e map_dev_type(AVHWDeviceType type);
 platf::pix_fmt_e map_pix_fmt(AVPixelFormat fmt);
 
 void sw_img_to_frame(const platf::img_t &img, frame_t &frame);
-void nv_d3d_img_to_frame(const platf::img_t &img, frame_t &frame);
-util::Either<buffer_t, int> nv_d3d_make_hwdevice_ctx(platf::hwdevice_t *hwdevice_ctx);
 
 util::Either<buffer_t, int> make_hwdevice_ctx(AVHWDeviceType type, void *hwdevice_ctx);
 int hwframe_ctx(ctx_t &ctx, buffer_t &hwdevice, AVPixelFormat format);
@@ -256,7 +256,12 @@ void end_capture_async(capture_thread_async_ctx_t &ctx);
 auto capture_thread_async = safe::make_shared<capture_thread_async_ctx_t>(start_capture_async, end_capture_async);
 auto capture_thread_sync = safe::make_shared<capture_thread_sync_ctx_t>(start_capture_sync, end_capture_sync);
 
+#ifdef ENABLE_NVENC
 #ifdef _WIN32
+
+void nv_d3d_img_to_frame(const platf::img_t &img, frame_t &frame);
+util::Either<buffer_t, int> nv_d3d_make_hwdevice_ctx(platf::hwdevice_t *hwdevice_ctx);
+
 static encoder_t nvenc {
   "nvenc"sv,
   { (int)nv::profile_h264_e::high, (int)nv::profile_hevc_e::main, (int)nv::profile_hevc_e::main_10 },
@@ -290,7 +295,12 @@ static encoder_t nvenc {
   nv_d3d_img_to_frame,
   nv_d3d_make_hwdevice_ctx
 };
+
 #else
+
+void nv_cuda_img_to_frame(const platf::img_t &img, frame_t &frame);
+util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevice_ctx);
+
 static encoder_t nvenc {
   "nvenc"sv,
   { (int)nv::profile_h264_e::high, (int)nv::profile_hevc_e::main, (int)nv::profile_hevc_e::main_10 },
@@ -324,6 +334,8 @@ static encoder_t nvenc {
   nv_cuda_img_to_frame,
   nv_cuda_make_hwdevice_ctx
 };
+
+#endif
 #endif
 
 static encoder_t software {
@@ -361,7 +373,9 @@ static encoder_t software {
 };
 
 static std::vector<encoder_t> encoders {
+#ifdef ENABLE_NVENC
   nvenc,
+#endif
   software
 };
 
@@ -1216,16 +1230,6 @@ int init() {
     config::video.hevc_mode = encoder.hevc[encoder_t::PASSED] ? (encoder.hevc[encoder_t::DYNAMIC_RANGE] ? 3 : 2) : 1;
   }
 
-#ifndef _WIN32
-  if(encoder.name == "nvenc") {
-    err = cuInit(0);
-    if(err != CUDA_SUCCESS) {
-      BOOST_LOG(fatal) << "Could not initialize the CUDA driver API"sv;
-      return -1;
-    }
-  }
-#endif
-
   return 0;
 }
 
@@ -1273,7 +1277,9 @@ int hwframe_ctx(ctx_t &ctx, buffer_t &hwdevice, AVPixelFormat format) {
 
 void sw_img_to_frame(const platf::img_t &img, frame_t &frame) {}
 
+#ifdef ENABLE_NVENC
 #ifdef _WIN32
+
 void nv_d3d_img_to_frame(const platf::img_t &img, frame_t &frame) {
   if(img.data == frame->data[0]) {
     return;
@@ -1317,33 +1323,10 @@ util::Either<buffer_t, int> nv_d3d_make_hwdevice_ctx(platf::hwdevice_t *hwdevice
 
   return ctx_buf;
 }
+
 #else
+
 void nv_cuda_img_to_frame(const platf::img_t &img, frame_t &frame) {
-  // if(img.data == frame->data[0]) {
-  //   return;
-  // }
-  
-  // // Need to have something refcounted
-  // if(!frame->buf[0]) {
-  //   frame->buf[0] = av_buffer_allocz(sizeof(AV FrameDescriptor));
-  // }
-
-  // auto desc = (AVFrameDescriptor*)frame->buf[0]->data;
-  // // desc->texture = (ID3D11Texture2D*)img.data;
-  // desc->index = 0;
-
-  // frame->data[0] = img.data;
-  // frame->data[1] = 0;
-
-  // frame->linesize[0] = img.row_pitch;
-
-  // frame->height = img.height;
-  // frame->width = img.width;
-
-  // // img.data <- src data
-  // // frame.data <- dst data
-
-  // // av_image_fill_pointers()
   // TODO: I don't know how to implement CUDA version.
 }
 
@@ -1353,17 +1336,21 @@ util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevic
   
   std::fill_n((std::uint8_t*)ctx, sizeof(AVCUDADeviceContext), 0);
 
+  if(auto err = cuInit(0) != CUDA_SUCCESS) {
+    BOOST_LOG(fatal) << "Could not initialize the CUDA driver API"sv;
+    return -1;
+  }
+
   CUdevice device;
-  err = cuDeviceGet(&device, (int*)hwdevice_ctx->data); ///TODO: I don't know ctx data content
-  if (err != CUDA_SUCCESS) {
+  ///TODO: I don't know hwdevice_ctx->data content
+  if (auto err = cuDeviceGet(&device, (int*)hwdevice_ctx->data) != CUDA_SUCCESS) {
       av_log(NULL, AV_LOG_ERROR, "Could not get the device number %d\n", 0);
       ret = AVERROR_UNKNOWN;
       goto error;
   }
 
   CUcontext cuda_ctx = NULL;
-  err = cuCtxCreate(&cuda_ctx, CU_CTX_SCHED_BLOCKING_SYNC, device);
-  if (err != CUDA_SUCCESS) {
+  if (auto err = cuCtxCreate(&cuda_ctx, CU_CTX_SCHED_BLOCKING_SYNC, device) != CUDA_SUCCESS) {
       av_log(NULL, AV_LOG_ERROR, "Error creating a CUDA context\n");
       ret = AVERROR_UNKNOWN;
       goto error;
@@ -1381,6 +1368,8 @@ util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevic
 
   return ctx_buf;
 }
+
+#endif
 #endif
 
 int start_capture_async(capture_thread_async_ctx_t &capture_thread_ctx) {

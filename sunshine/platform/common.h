@@ -33,6 +33,7 @@ enum class dev_type_e {
   none,
   dxgi,
   cuda,
+  opencl,
   unknown
 };
 
