@@ -1336,24 +1336,22 @@ util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevic
   
   std::fill_n((std::uint8_t*)ctx, sizeof(AVCUDADeviceContext), 0);
 
-  if(auto err = cuInit(0) != CUDA_SUCCESS) {
-    BOOST_LOG(fatal) << "Could not initialize the CUDA driver API"sv;
+  if(cuInit(0) != CUDA_SUCCESS) {
+    BOOST_LOG(error) << "Could not initialize the CUDA driver API"sv;
     return -1;
   }
 
   CUdevice device;
   ///TODO: I don't know hwdevice_ctx->data content
-  if (auto err = cuDeviceGet(&device, (int*)hwdevice_ctx->data) != CUDA_SUCCESS) {
-      av_log(NULL, AV_LOG_ERROR, "Could not get the device number %d\n", 0);
-      ret = AVERROR_UNKNOWN;
-      goto error;
+  if (cuDeviceGet(&device, (int*)hwdevice_ctx->data) != CUDA_SUCCESS) {
+    BOOST_LOG(error) << "Could not get the device number "sv << (int*)hwdevice_ctx->data;
+    return -1;
   }
 
   CUcontext cuda_ctx = NULL;
   if (auto err = cuCtxCreate(&cuda_ctx, CU_CTX_SCHED_BLOCKING_SYNC, device) != CUDA_SUCCESS) {
-      av_log(NULL, AV_LOG_ERROR, "Error creating a CUDA context\n");
-      ret = AVERROR_UNKNOWN;
-      goto error;
+    BOOST_LOG(error) << "Error creating a CUDA context"sv;
+    return -1;
   }
 
   ctx->cuda_ctx = cuda_ctx;
