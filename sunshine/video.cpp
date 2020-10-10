@@ -1349,7 +1349,7 @@ util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevic
   }
 
   CUcontext cuda_ctx = NULL;
-  if (auto err = cuCtxCreate(&cuda_ctx, CU_CTX_SCHED_BLOCKING_SYNC, device) != CUDA_SUCCESS) {
+  if (cuCtxCreate(&cuda_ctx, CU_CTX_SCHED_BLOCKING_SYNC, device) != CUDA_SUCCESS) {
     BOOST_LOG(error) << "Error creating a CUDA context"sv;
     return -1;
   }
