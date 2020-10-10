@@ -1193,15 +1193,6 @@ bool validate_encoder(encoder_t &encoder) {
 }
 
 int init() {
-#ifdef ENABLE_NVENC
-#ifndef _WIN32
-  if(cuInit(0) != CUDA_SUCCESS) {
-    BOOST_LOG(error) << "Could not initialize the CUDA driver API"sv;
-    return -1;
-  }
-#endif
-#endif
-
   KITTY_WHILE_LOOP(auto pos = std::begin(encoders), pos != std::end(encoders), {
     if(
       (!config::video.encoder.empty() && pos->name != config::video.encoder)  ||
@@ -1340,6 +1331,12 @@ void nv_cuda_img_to_frame(const platf::img_t &img, frame_t &frame) {
     return;
   }
 
+  // Need to have something refcounted
+  if(!frame->buf[0]) {
+    // frame->buf[0] = av_buffer_allocz(sizeof(AVD3D11FrameDescriptor));
+    BOOST_LOG(error) << "Init buffer"sv;
+  }
+
   frame->data[0] = img.data;
   frame->data[1] = 0;
 
@@ -1355,20 +1352,31 @@ util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevic
   
   std::fill_n((std::uint8_t*)ctx, sizeof(AVCUDADeviceContext), 0);
 
+  if(cuInit(0) != CUDA_SUCCESS) {
+    BOOST_LOG(error) << "Could not initialize the CUDA driver API"sv;
+    return AVERROR_UNKNOWN;
+  }
+
   CUdevice device;
   ///TODO: I don't know hwdevice_ctx->data content
   if (cuDeviceGet(&device, *(int*)hwdevice_ctx->data) != CUDA_SUCCESS) {
     BOOST_LOG(error) << "Could not get the device number "sv << *(int*)hwdevice_ctx->data;
-    return -1;
+    return AVERROR_UNKNOWN;
   }
 
   CUcontext cuda_ctx = NULL;
   if (cuCtxCreate(&cuda_ctx, CU_CTX_SCHED_BLOCKING_SYNC, device) != CUDA_SUCCESS) {
     BOOST_LOG(error) << "Error creating a CUDA context"sv;
-    return -1;
+    return AVERROR_UNKNOWN;
   }
 
   ctx->cuda_ctx = cuda_ctx;
+
+  CUcontext dummy;
+  if (cuCtxPopCurrent(&dummy) != CUDA_SUCCESS) {
+    BOOST_LOG(error) << "cuCtxPopCurrent failed"sv;
+    return AVERROR_UNKNOWN;
+  }
 
   auto err = av_hwdevice_ctx_init(ctx_buf.get());
   if(err) {
