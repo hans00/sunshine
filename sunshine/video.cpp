@@ -17,11 +17,17 @@ extern "C" {
 #include "video.h"
 #include "main.h"
 
-#ifdef _WIN32
 extern "C" {
+#ifdef _WIN32
+
 #include <libavutil/hwcontext_d3d11va.h>
-}
+
+#else
+
+#include <libavutil/hwcontext_cuda.h>
+
 #endif
+}
 
 namespace video {
 using namespace std::literals;
@@ -284,6 +290,40 @@ static encoder_t nvenc {
   nv_d3d_img_to_frame,
   nv_d3d_make_hwdevice_ctx
 };
+#else
+static encoder_t nvenc {
+  "nvenc"sv,
+  { (int)nv::profile_h264_e::high, (int)nv::profile_hevc_e::main, (int)nv::profile_hevc_e::main_10 },
+  AV_HWDEVICE_TYPE_CUDA,
+  AV_PIX_FMT_CUDA,
+  AV_PIX_FMT_NV12, AV_PIX_FMT_P010,
+  {
+    {
+      { "forced-idr"s, 1 },
+      { "zerolatency"s, 1 },
+      { "preset"s, &config::video.nv.preset },
+      { "rc"s, &config::video.nv.rc }
+    },
+    std::nullopt, std::nullopt,
+    "hevc_nvenc"s,
+  },
+  {
+    {
+      { "forced-idr"s, 1 },
+      { "zerolatency"s, 1 },
+      { "preset"s, &config::video.nv.preset },
+      { "rc"s, &config::video.nv.rc },
+      { "coder"s, &config::video.nv.coder }
+    },
+    std::nullopt, std::make_optional<encoder_t::option_t>({"qp"s, &config::video.qp}),
+    "h264_nvenc"s
+  },
+  false,
+  true,
+
+  nv_cuda_img_to_frame,
+  nv_cuda_make_hwdevice_ctx
+};
 #endif
 
 static encoder_t software {
@@ -321,9 +361,7 @@ static encoder_t software {
 };
 
 static std::vector<encoder_t> encoders {
-#ifdef _WIN32
   nvenc,
-#endif
   software
 };
 
@@ -1178,6 +1216,16 @@ int init() {
     config::video.hevc_mode = encoder.hevc[encoder_t::PASSED] ? (encoder.hevc[encoder_t::DYNAMIC_RANGE] ? 3 : 2) : 1;
   }
 
+#ifndef _WIN32
+  if(encoder.name == "nvenc") {
+    err = cuInit(0);
+    if(err != CUDA_SUCCESS) {
+      BOOST_LOG(fatal) << "Could not initialize the CUDA driver API"sv;
+      return -1;
+    }
+  }
+#endif
+
   return 0;
 }
 
@@ -1269,6 +1317,70 @@ util::Either<buffer_t, int> nv_d3d_make_hwdevice_ctx(platf::hwdevice_t *hwdevice
 
   return ctx_buf;
 }
+#else
+void nv_cuda_img_to_frame(const platf::img_t &img, frame_t &frame) {
+  // if(img.data == frame->data[0]) {
+  //   return;
+  // }
+  
+  // // Need to have something refcounted
+  // if(!frame->buf[0]) {
+  //   frame->buf[0] = av_buffer_allocz(sizeof(AV FrameDescriptor));
+  // }
+
+  // auto desc = (AVFrameDescriptor*)frame->buf[0]->data;
+  // // desc->texture = (ID3D11Texture2D*)img.data;
+  // desc->index = 0;
+
+  // frame->data[0] = img.data;
+  // frame->data[1] = 0;
+
+  // frame->linesize[0] = img.row_pitch;
+
+  // frame->height = img.height;
+  // frame->width = img.width;
+
+  // // img.data <- src data
+  // // frame.data <- dst data
+
+  // // av_image_fill_pointers()
+  // TODO: I don't know how to implement CUDA version.
+}
+
+util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevice_ctx) {
+  buffer_t ctx_buf { av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_CUDA) };
+  auto ctx = (AVCUDADeviceContext*)((AVHWDeviceContext*)ctx_buf->data)->hwctx;
+  
+  std::fill_n((std::uint8_t*)ctx, sizeof(AVCUDADeviceContext), 0);
+
+  CUdevice device;
+  err = cuDeviceGet(&device, (int*)hwdevice_ctx->data); ///TODO: I don't know ctx data content
+  if (err != CUDA_SUCCESS) {
+      av_log(NULL, AV_LOG_ERROR, "Could not get the device number %d\n", 0);
+      ret = AVERROR_UNKNOWN;
+      goto error;
+  }
+
+  CUcontext cuda_ctx = NULL;
+  err = cuCtxCreate(&cuda_ctx, CU_CTX_SCHED_BLOCKING_SYNC, device);
+  if (err != CUDA_SUCCESS) {
+      av_log(NULL, AV_LOG_ERROR, "Error creating a CUDA context\n");
+      ret = AVERROR_UNKNOWN;
+      goto error;
+  }
+
+  ctx->cuda_ctx = cuda_ctx;
+
+  auto err = av_hwdevice_ctx_init(ctx_buf.get());
+  if(err) {
+    char err_str[AV_ERROR_MAX_STRING_SIZE] {0};
+    BOOST_LOG(error) << "Failed to create FFMpeg nvenc: "sv << av_make_error_string(err_str, AV_ERROR_MAX_STRING_SIZE, err);
+
+    return err;
+  }
+
+  return ctx_buf;
+}
 #endif
 
 int start_capture_async(capture_thread_async_ctx_t &capture_thread_ctx) {
@@ -1303,6 +1415,8 @@ platf::dev_type_e map_dev_type(AVHWDeviceType type) {
   switch(type) {
     case AV_HWDEVICE_TYPE_D3D11VA:
       return platf::dev_type_e::dxgi;
+    case AV_HWDEVICE_TYPE_CUDA:
+      return platf::dev_type_e::cuda;
     case AV_PICTURE_TYPE_NONE:
       return platf::dev_type_e::none;
     default:

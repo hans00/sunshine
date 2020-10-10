@@ -32,6 +32,7 @@ constexpr std::uint16_t Y            = 0x8000;
 enum class dev_type_e {
   none,
   dxgi,
+  cuda,
   unknown
 };
 
