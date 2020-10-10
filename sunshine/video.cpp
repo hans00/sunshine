@@ -1343,8 +1343,8 @@ util::Either<buffer_t, int> nv_cuda_make_hwdevice_ctx(platf::hwdevice_t *hwdevic
 
   CUdevice device;
   ///TODO: I don't know hwdevice_ctx->data content
-  if (cuDeviceGet(&device, (int*)hwdevice_ctx->data) != CUDA_SUCCESS) {
-    BOOST_LOG(error) << "Could not get the device number "sv << (int*)hwdevice_ctx->data;
+  if (cuDeviceGet(&device, (int)*hwdevice_ctx->data) != CUDA_SUCCESS) {
+    BOOST_LOG(error) << "Could not get the device number "sv << (int)*hwdevice_ctx->data;
     return -1;
   }
 
